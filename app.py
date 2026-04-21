@@ -338,7 +338,8 @@ def alexa_handler():
             names = [r['name'] for r in rows]
             if len(names) == 1:
                 return speak(f'リストには{names[0]}があります。')
-            return speak(f'リストには{len(names)}件あります。{「、」.join(names[:5])}{"など" if len(names) > 5 else ""}です。')
+            listing = '、'.join(names[:5]) + ('など' if len(names) > 5 else '')
+            return speak(f'リストには{len(names)}件あります。{listing}です。')
 
         elif intent == 'CheckStockIntent':
             hh = get_household()
