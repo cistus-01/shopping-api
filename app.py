@@ -141,6 +141,7 @@ def migrate_db():
         'ALTER TABLE list_items ADD COLUMN note TEXT DEFAULT ""',
         'ALTER TABLE recurring ADD COLUMN interval_months INTEGER DEFAULT 1',
         'ALTER TABLE recurring ADD COLUMN start_month INTEGER DEFAULT 1',
+        'ALTER TABLE regular_items ADD COLUMN subcategory TEXT',
     ]:
         try:
             db.execute(col_sql)
@@ -382,14 +383,15 @@ def add_item():
     now = datetime.utcnow().isoformat()
     db.execute('''
         INSERT OR REPLACE INTO regular_items
-        (id, household_id, name, store, price, category, cycle_days, last_bought_at, purchase_history, notes, created_at, updated_at)
-        VALUES (?,?,?,?,?,?,?,?,?,?,?,?)
+        (id, household_id, name, store, price, category, subcategory, cycle_days, last_bought_at, purchase_history, notes, created_at, updated_at)
+        VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)
     ''', (
         item_id, g.household_id,
         data.get('name', ''),
         data.get('store'),
         data.get('price'),
         data.get('category', 'その他'),
+        data.get('subcategory'),
         data.get('cycleDays') or data.get('cycle_days'),
         data.get('lastBoughtAt') or data.get('last_bought_at'),
         json.dumps(data.get('purchaseHistory') or data.get('purchase_history') or []),
@@ -399,6 +401,44 @@ def add_item():
     ))
     db.commit()
     return jsonify({'id': item_id}), 201
+
+@app.route('/api/items/<item_id>', methods=['PATCH'])
+@require_auth
+def update_item(item_id):
+    data = request.get_json()
+    db = get_db()
+    col_map = {
+        'name': 'name', 'store': 'store', 'price': 'price',
+        'category': 'category', 'notes': 'notes', 'subcategory': 'subcategory',
+        'cycle_days': 'cycle_days', 'cycleDays': 'cycle_days',
+        'last_bought_at': 'last_bought_at', 'lastBoughtAt': 'last_bought_at',
+        'purchase_history': 'purchase_history', 'purchaseHistory': 'purchase_history',
+    }
+    fields = {}
+    for k, col in col_map.items():
+        if k in data:
+            val = data[k]
+            if col == 'purchase_history':
+                val = json.dumps(val)
+            fields[col] = val
+    if not fields:
+        return jsonify({'error': 'no fields'}), 400
+    fields['updated_at'] = datetime.utcnow().isoformat()
+    set_clause = ', '.join(f'{k}=?' for k in fields)
+    db.execute(
+        f'UPDATE regular_items SET {set_clause} WHERE id=? AND household_id=?',
+        list(fields.values()) + [item_id, g.household_id]
+    )
+    db.commit()
+    return jsonify({'ok': True})
+
+@app.route('/api/items/<item_id>', methods=['DELETE'])
+@require_auth
+def delete_item(item_id):
+    db = get_db()
+    db.execute('DELETE FROM regular_items WHERE id=? AND household_id=?', (item_id, g.household_id))
+    db.commit()
+    return jsonify({'ok': True})
 
 @app.route('/api/items/sync', methods=['POST'])
 @require_auth
@@ -908,4 +948,11 @@ def restore():
 def serve_react(path):
     if path and os.path.exists(os.path.join(app.static_folder, path)):
         return send_from_directory(app.static_folder, path)
+    return send_from_directory(app.static_folder, 'index.html')
+
+@app.errorhandler(404)
+def not_found(e):
+    # APIパスは404をそのまま返す。それ以外はSPAのindex.htmlを返す
+    if request.path.startswith('/api/'):
+        return jsonify({'error': 'Not found'}), 404
     return send_from_directory(app.static_folder, 'index.html')
